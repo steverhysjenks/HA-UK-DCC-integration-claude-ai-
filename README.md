@@ -21,7 +21,7 @@ A Home Assistant custom integration that pulls **electricity and gas consumption
 ### HACS (recommended)
 
 1. In HACS → Integrations → ⋮ → *Custom repositories*.
-2. Add `https://github.com/HandyHat/ha-hildebrandglow-dcc` with category **Integration**.
+2. Add `https://github.com/steverhysjenks/HA-UK-DCC-integration-claude-ai` with category **Integration**.
 3. Search for *Hildebrand Glow (DCC)* and install.
 4. Restart Home Assistant.
 
