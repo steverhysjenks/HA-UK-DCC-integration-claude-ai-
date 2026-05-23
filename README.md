@@ -1,5 +1,7 @@
 # Hildebrand Glow (DCC) — Home Assistant Integration
 
+The source is from the link repo below (hildebrand). As it is abandond I am attempting using Claude.ai to update it for my use only.
+
 A Home Assistant custom integration that pulls **electricity and gas consumption data** from UK SMETS smart meters via the **Hildebrand Glow / Glowmarkt API** (Data Communications Company backend).
 
 > **Data is delayed ~30 minutes** due to the DCC polling cycle. For real-time data, see [ha_hildebrand_glow_ihd_mqtt](https://github.com/megakid/ha_hildebrand_glow_ihd_mqtt).
