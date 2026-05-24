@@ -208,7 +208,9 @@ class GlowApiClient:
                 resource_id, start, end, period="P1D", function="sum"
             )
             if readings:
-                return readings[-1][1]
+            return readings[-1][1]
+        except GlowAuthError:
+            raise  # re-raise so coordinator can trigger ConfigEntryAuthFailed
         except GlowApiError as err:
             _LOGGER.debug("Could not fetch today's usage for %s: %s", resource_id, err)
         return None
