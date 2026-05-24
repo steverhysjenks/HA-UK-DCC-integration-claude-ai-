@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -52,10 +53,13 @@ class GlowApiClient:
         }
         payload = {"username": username, "password": password}
 
+        _LOGGER.debug("Authenticating user %s", username)
+
         try:
             async with self._session.post(
                 url, headers=headers, json=payload
             ) as resp:
+                _LOGGER.debug("Auth response status: %s", resp.status)
                 if resp.status == 401:
                     raise GlowAuthError("Invalid username or password")
                 if resp.status != 200:
@@ -69,6 +73,12 @@ class GlowApiClient:
                 f"Network error during authentication: {err}"
             ) from err
 
+        _LOGGER.debug(
+            "Auth response keys: %s, valid=%s",
+            list(data.keys()),
+            data.get("valid"),
+        )
+
         if not data.get("valid"):
             raise GlowAuthError("Authentication rejected by Glow API")
 
@@ -79,7 +89,9 @@ class GlowApiClient:
             datetime.fromtimestamp(exp, tz=timezone.utc) if exp else None
         )
         _LOGGER.debug(
-            "Glow API authenticated successfully, token expires %s",
+            "Token stored, length=%d, first10=%s, expires=%s",
+            len(token),
+            token[:10],
             self._token_expiry,
         )
         return token
@@ -87,16 +99,30 @@ class GlowApiClient:
     def is_token_valid(self) -> bool:
         """Return True if the cached token is still usable."""
         if not self._token or not self._token_expiry:
+            _LOGGER.debug(
+                "is_token_valid=False (token=%s, expiry=%s)",
+                bool(self._token),
+                self._token_expiry,
+            )
             return False
-        return (
+        valid = (
             datetime.now(tz=timezone.utc)
             < self._token_expiry - timedelta(minutes=30)
         )
+        _LOGGER.debug(
+            "is_token_valid=%s (expiry=%s)", valid, self._token_expiry
+        )
+        return valid
 
     def set_token(self, token: str, expiry: datetime | None = None) -> None:
         """Inject an existing token restored from config entry data."""
         self._token = token
         self._token_expiry = expiry
+        _LOGGER.debug(
+            "Token injected from config entry, length=%d, expiry=%s",
+            len(token) if token else 0,
+            expiry,
+        )
 
     def _auth_headers(self) -> dict[str, str]:
         if not self._token:
@@ -109,12 +135,24 @@ class GlowApiClient:
 
     async def _get(self, path: str, params: dict | None = None) -> Any:
         url = f"{API_BASE}{path}"
+        headers = self._auth_headers()
+        _LOGGER.debug(
+            "GET %s params=%s headers(token_len=%d)",
+            path,
+            params,
+            len(self._token) if self._token else 0,
+        )
         try:
             async with self._session.get(
-                url, headers=self._auth_headers(), params=params
+                url, headers=headers, params=params
             ) as resp:
+                _LOGGER.debug("GET %s -> status %s", path, resp.status)
                 if resp.status == 401:
-                    raise GlowAuthError("Token rejected; re-authentication required")
+                    body = await resp.text()
+                    _LOGGER.debug("401 body for %s: %s", path, body[:200])
+                    raise GlowAuthError(
+                        "Token rejected; re-authentication required"
+                    )
                 if resp.status != 200:
                     text = await resp.text()
                     raise GlowApiError(
@@ -145,7 +183,12 @@ class GlowApiClient:
         period: str = "P1D",
         function: str = "sum",
     ) -> list[list[float]]:
-        """Retrieve time-series readings for a resource."""
+        """Retrieve time-series readings for a resource.
+
+        The API stores all data in UTC but uses the offset parameter to
+        determine day boundaries. For the UK, BST (UTC+1) = offset -60,
+        GMT (UTC+0) = offset 0.
+        """
         utc_offset = (
             int(from_dt.utcoffset().total_seconds() / 60)
             if from_dt.utcoffset()
@@ -158,6 +201,13 @@ class GlowApiClient:
             "offset": str(-utc_offset),
             "function": function,
         }
+        _LOGGER.debug(
+            "Readings request for %s: from=%s to=%s offset=%s",
+            resource_id,
+            params["from"],
+            params["to"],
+            params["offset"],
+        )
         data = await self._get(
             f"/resource/{resource_id}/readings", params=params
         )
@@ -183,35 +233,52 @@ class GlowApiClient:
         """Return the current tariff for a resource."""
         return await self._get(f"/resource/{resource_id}/tariff")
 
-async def get_today_usage(
-    self, resource_id: str, local_tz: timezone | None = None
-) -> float | None:
-    """Return today's total usage/cost for a resource."""
-    # Use the provided timezone, but default to BST/GMT via a fixed
-    # UTC+1 offset in summer. Callers should pass hass.config.time_zone.
-    from zoneinfo import ZoneInfo
-    tz = ZoneInfo("Europe/London") if local_tz is None else local_tz
+    async def get_today_usage(
+        self, resource_id: str, local_tz: Any | None = None
+    ) -> float | None:
+        """Return today's total usage/cost for a resource.
 
-    now = datetime.now(tz=tz)
-    if now.hour < 1 or (now.hour == 1 and now.minute < 30):
-        start = (now - timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-    else:
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        Uses Europe/London timezone by default so that BST/GMT transitions
+        are handled correctly and the API offset parameter is set properly.
+        """
+        tz = local_tz if local_tz is not None else ZoneInfo("Europe/London")
+        now = datetime.now(tz=tz)
 
-    end = start.replace(hour=23, minute=59, second=59)
-
-    try:
-        readings = await self.get_resource_readings(
-            resource_id, start, end, period="P1D", function="sum"
-        )
-        if readings:
-            return readings[-1][1]
-    except GlowAuthError:
-        raise
-    except GlowApiError as err:
         _LOGGER.debug(
-            "Could not fetch today's usage for %s: %s", resource_id, err
+            "get_today_usage for %s: now=%s tz=%s utcoffset=%s",
+            resource_id,
+            now.isoformat(),
+            tz,
+            now.utcoffset(),
         )
-    return None
+
+        # If before 01:30 use yesterday to ensure the last half-hourly
+        # slot has propagated through the DCC (~30 min delay)
+        if now.hour < 1 or (now.hour == 1 and now.minute < 30):
+            start = (now - timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        else:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        end = start.replace(hour=23, minute=59, second=59)
+
+        _LOGGER.debug(
+            "Querying readings from %s to %s",
+            start.isoformat(),
+            end.isoformat(),
+        )
+
+        try:
+            readings = await self.get_resource_readings(
+                resource_id, start, end, period="P1D", function="sum"
+            )
+            if readings:
+                return readings[-1][1]
+        except GlowAuthError:
+            raise
+        except GlowApiError as err:
+            _LOGGER.debug(
+                "Could not fetch today's usage for %s: %s", resource_id, err
+            )
+        return None
