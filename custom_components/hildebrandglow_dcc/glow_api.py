@@ -183,30 +183,35 @@ class GlowApiClient:
         """Return the current tariff for a resource."""
         return await self._get(f"/resource/{resource_id}/tariff")
 
-    async def get_today_usage(
-        self, resource_id: str, local_tz: timezone | None = None
-    ) -> float | None:
-        """Return today's total usage/cost for a resource."""
-        now = datetime.now(tz=local_tz or timezone.utc)
-        if now.hour < 1 or (now.hour == 1 and now.minute < 30):
-            start = (now - timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-        else:
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+async def get_today_usage(
+    self, resource_id: str, local_tz: timezone | None = None
+) -> float | None:
+    """Return today's total usage/cost for a resource."""
+    # Use the provided timezone, but default to BST/GMT via a fixed
+    # UTC+1 offset in summer. Callers should pass hass.config.time_zone.
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Europe/London") if local_tz is None else local_tz
 
-        end = start.replace(hour=23, minute=59, second=59)
+    now = datetime.now(tz=tz)
+    if now.hour < 1 or (now.hour == 1 and now.minute < 30):
+        start = (now - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    else:
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        try:
-            readings = await self.get_resource_readings(
-                resource_id, start, end, period="P1D", function="sum"
-            )
-            if readings:
-                return readings[-1][1]
-        except GlowAuthError:
-            raise
-        except GlowApiError as err:
-            _LOGGER.debug(
-                "Could not fetch today's usage for %s: %s", resource_id, err
-            )
-        return None
+    end = start.replace(hour=23, minute=59, second=59)
+
+    try:
+        readings = await self.get_resource_readings(
+            resource_id, start, end, period="P1D", function="sum"
+        )
+        if readings:
+            return readings[-1][1]
+    except GlowAuthError:
+        raise
+    except GlowApiError as err:
+        _LOGGER.debug(
+            "Could not fetch today's usage for %s: %s", resource_id, err
+        )
+    return None
