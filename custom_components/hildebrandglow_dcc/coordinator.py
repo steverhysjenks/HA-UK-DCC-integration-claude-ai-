@@ -133,19 +133,21 @@ class GlowUpdateCoordinator(DataUpdateCoordinator[GlowCoordinatorData]):
                 resource_id: str = resource["resourceId"]
                 result.resources[resource_id] = {**resource, "ve_id": ve_id, "ve_name": ve_name}
 
-                try:
-                    usage = await self._client.get_today_usage(resource_id)
-                    if usage is not None:
-                        # pence → GBP conversion for cost classifiers
-                        if "cost" in classifier:
-                            usage = round(usage / 100, 4)
-                        result.usage[resource_id] = usage
-                except GlowApiError as err:
-                    _LOGGER.debug(
-                        "Skipping today's data for resource %s (%s): %s",
-                        resource_id,
-                        classifier,
-                        err,
-                    )
+        try:
+            usage = await self._client.get_today_usage(resource_id)
+            if usage is not None:
+                if "cost" in classifier:
+                    usage = round(usage / 100, 4)
+                result.usage[resource_id] = usage
+        except GlowAuthError as err:
+            self._authenticated = False
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except GlowApiError as err:
+            _LOGGER.debug(
+                "Skipping today's data for resource %s (%s): %s",
+                resource_id,
+                classifier,
+                err,
+            )
 
         return result
