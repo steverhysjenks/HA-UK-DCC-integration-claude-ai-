@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hildebrand Glow (DCC)",
+        "description": "Enter your Bright / Glowmarkt account credentials.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Hildebrand Glow (DCC)",
+        "description": "Your session has expired. Please re-enter your credentials.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password.",
+      "cannot_connect": "Failed to connect to the Glow API. Check your network.",
+      "unknown": "An unexpected error occurred. Check the Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This Glow account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  }
+}
